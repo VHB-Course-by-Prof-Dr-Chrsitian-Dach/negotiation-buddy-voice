@@ -73,11 +73,25 @@ export const VoiceInterface = () => {
 
     vapi.on("error", (error: any) => {
       console.error("Vapi error:", error);
+      let errorMsg = "An error occurred";
+      if (error.message) {
+        errorMsg = error.message;
+      }
+      // Check for common errors
+      if (error.message?.includes("assistant")) {
+        errorMsg = "Assistant configuration error. Please verify your Vapi assistant settings.";
+      } else if (error.message?.includes("microphone") || error.message?.includes("audio")) {
+        errorMsg = "Microphone error. Please check your audio settings.";
+      }
       toast({
         title: "Error",
-        description: error.message || "An error occurred",
+        description: errorMsg,
         variant: "destructive",
       });
+    });
+
+    vapi.on("message", (message: any) => {
+      console.log("Vapi message:", message);
     });
 
     return () => {
@@ -91,13 +105,30 @@ export const VoiceInterface = () => {
     try {
       if (!vapiRef.current) return;
       
+      // Check microphone permissions first
+      setStatus("Requesting microphone access...");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop()); // Stop the test stream
+      } catch (permError: any) {
+        console.error("Microphone permission error:", permError);
+        toast({
+          title: "Microphone Access Required",
+          description: "Please allow microphone access to start the practice session",
+          variant: "destructive",
+        });
+        setStatus("Microphone access denied");
+        return;
+      }
+      
       setStatus("Connecting...");
+      console.log("Starting call with assistant:", ASSISTANT_ID);
       await vapiRef.current.start(ASSISTANT_ID);
     } catch (error: any) {
       console.error("Error starting call:", error);
       toast({
         title: "Connection Failed",
-        description: error.message || "Failed to start voice session",
+        description: error.message || "Failed to start voice session. Please check your Vapi assistant configuration.",
         variant: "destructive",
       });
       setStatus("Failed to connect");
