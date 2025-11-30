@@ -1,13 +1,15 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useNavigate } from "react-router-dom";
-import { Mic, Target, TrendingUp, Award } from "lucide-react";
+import { Mic, Target, TrendingUp, Award, Trophy } from "lucide-react";
+import { Navigation } from "@/components/Navigation";
 
 const Index = () => {
   const navigate = useNavigate();
 
   return (
     <div className="min-h-screen w-full bg-background">
+      <Navigation />
       {/* Hero Section */}
       <div className="relative overflow-hidden">
         {/* Background gradient */}
@@ -37,7 +39,7 @@ const Index = () => {
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
               <Button
                 size="lg"
-                onClick={() => navigate("/practice")}
+                onClick={() => navigate("/cases")}
                 className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-full px-8 py-6 text-lg shadow-lg hover:shadow-xl transition-all"
               >
                 <Mic className="mr-2 h-5 w-5" />
@@ -46,9 +48,11 @@ const Index = () => {
               <Button
                 size="lg"
                 variant="outline"
+                onClick={() => navigate("/leaderboard")}
                 className="rounded-full px-8 py-6 text-lg border-primary/20 hover:bg-primary/5"
               >
-                Learn More
+                <Trophy className="mr-2 h-5 w-5" />
+                Leaderboard
               </Button>
             </div>
           </div>
@@ -101,11 +105,11 @@ const Index = () => {
           </p>
           <Button
             size="lg"
-            onClick={() => navigate("/practice")}
+            onClick={() => navigate("/cases")}
             className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-full px-8 py-6 text-lg shadow-lg hover:shadow-xl transition-all"
           >
             <Mic className="mr-2 h-5 w-5" />
-            Begin Practice Session
+            Start Practicing
           </Button>
         </Card>
       </div>

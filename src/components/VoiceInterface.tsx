@@ -2,29 +2,68 @@ import { useState, useEffect, useRef } from "react";
 import Vapi from "@vapi-ai/web";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Mic, MicOff, Phone, PhoneOff } from "lucide-react";
+import { Phone, PhoneOff, BookOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { VoiceOrb } from "./VoiceOrb";
+import { useNavigate } from "react-router-dom";
+import type { NegotiationCase } from "@/data/negotiationCases";
 
-const VAPI_PUBLIC_KEY = "f1126e26-c62f-4452-8beb-29e341a2e639";
-const ASSISTANT_ID = "0f4de0f8-b0d6-4fbf-82ab-0a15fe7f3f9f";
+// Base public key fallback if a case does not specify one
+const GLOBAL_VAPI_PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY as string | undefined;
 
-export const VoiceInterface = () => {
+interface VoiceInterfaceProps {
+  negotiationCase: NegotiationCase;
+}
+
+export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
+  const navigate = useNavigate();
   const [isConnected, setIsConnected] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [status, setStatus] = useState<string>("Ready to start");
   const vapiRef = useRef<Vapi | null>(null);
+  const speakingRef = useRef(false);
+  const connectedRef = useRef(false);
   const { toast } = useToast();
 
   useEffect(() => {
-    // Initialize Vapi
-    const vapi = new Vapi(VAPI_PUBLIC_KEY);
+    const effectivePublicKey = negotiationCase.publicKey || GLOBAL_VAPI_PUBLIC_KEY;
+    console.log("[VoiceInterface] Initializing Vapi for case:", negotiationCase.id);
+    console.log("[VoiceInterface] Public key:", effectivePublicKey);
+    console.log("[VoiceInterface] Assistant ID:", negotiationCase.assistantId || "none (will use transient)");
+    
+    if (!effectivePublicKey) {
+      setStatus("Missing Vapi configuration");
+      toast({
+        title: "Configuration Missing",
+        description: "Set VITE_VAPI_PUBLIC_KEY in .env.local or provide publicKey per case",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Clean up previous instance if it exists
+    if (vapiRef.current) {
+      console.log("[VoiceInterface] Cleaning up previous Vapi instance");
+      try {
+        vapiRef.current.stop();
+      } catch (e) {
+        console.warn("[VoiceInterface] Error stopping previous instance:", e);
+      }
+    }
+
+    // Initialize Vapi with configuration to disable Krisp
+    console.log("[VoiceInterface] Creating new Vapi instance");
+    const vapi = new Vapi(effectivePublicKey, {
+      // Disable Krisp noise cancellation to prevent processor errors
+      enableKrisp: false,
+    });
     vapiRef.current = vapi;
 
     // Set up event listeners
     vapi.on("call-start", () => {
       console.log("Call started");
+      connectedRef.current = true;
       setIsConnected(true);
       setStatus("Connected");
       toast({
@@ -33,20 +72,28 @@ export const VoiceInterface = () => {
       });
     });
 
-    vapi.on("call-end", () => {
-      console.log("Call ended");
+    vapi.on("call-end", (endEvent: any) => {
+      console.log("Call ended", endEvent);
+      console.log("Call end reason:", endEvent?.reason || "unknown");
+      connectedRef.current = false;
+      speakingRef.current = false;
       setIsConnected(false);
       setIsSpeaking(false);
       setIsListening(false);
       setStatus("Call ended");
-      toast({
-        title: "Session Ended",
-        description: "Voice session has ended",
-      });
+      
+      // Only show toast if call wasn't manually ended by user
+      if (endEvent?.reason !== "user-ended") {
+        toast({
+          title: "Session Ended",
+          description: endEvent?.reason ? `Reason: ${endEvent.reason}` : "Voice session has ended",
+        });
+      }
     });
 
     vapi.on("speech-start", () => {
       console.log("AI started speaking");
+      speakingRef.current = true;
       setIsSpeaking(true);
       setIsListening(false);
       setStatus("AI is speaking...");
@@ -54,35 +101,55 @@ export const VoiceInterface = () => {
 
     vapi.on("speech-end", () => {
       console.log("AI stopped speaking");
+      speakingRef.current = false;
       setIsSpeaking(false);
       setStatus("Listening...");
     });
 
     vapi.on("volume-level", (level: number) => {
-      // User is speaking if volume level is above threshold
-      if (level > 0.01 && !isSpeaking) {
-        setIsListening(true);
-        setStatus("You are speaking...");
-      } else if (level < 0.01 && !isSpeaking) {
-        setIsListening(false);
-        if (isConnected) {
-          setStatus("Listening...");
+      // Only update listening state when AI isn't speaking
+      if (!speakingRef.current) {
+        if (level > 0.01) {
+          setIsListening(true);
+          setStatus("You are speaking...");
+        } else {
+          setIsListening(false);
+          if (connectedRef.current) setStatus("Listening...");
         }
       }
     });
 
     vapi.on("error", (error: any) => {
-      console.error("Vapi error:", error);
+      console.error("[Vapi Error] Full error object:", error);
+      console.error("[Vapi Error] Type:", error?.type);
+      console.error("[Vapi Error] Message:", error?.message);
+      console.error("[Vapi Error] Details:", error?.details);
+      console.error("[Vapi Error] Stage:", error?.stage);
+      console.error("[Vapi Error] Stringified:", JSON.stringify(error, null, 2));
+      
       let errorMsg = "An error occurred";
       if (error.message) {
         errorMsg = error.message;
       }
+      
       // Check for common errors
-      if (error.message?.includes("assistant")) {
-        errorMsg = "Assistant configuration error. Please verify your Vapi assistant settings.";
+      if (error.type === "start-method-error") {
+        errorMsg = "Failed to start call. The assistant ID may be invalid or inaccessible.";
+        setStatus("Failed to connect");
+      } else if (error.type === "validation-error") {
+        errorMsg = "Configuration validation failed. Check assistant settings.";
+        setStatus("Failed to connect");
+      } else if (error.message?.includes("assistant") || error.message?.includes("404")) {
+        errorMsg = "Assistant not found. Please verify your assistant ID in the Vapi dashboard.";
+        setStatus("Failed to connect");
       } else if (error.message?.includes("microphone") || error.message?.includes("audio")) {
         errorMsg = "Microphone error. Please check your audio settings.";
+      } else if (error.message?.includes("Krisp") || error.message?.includes("processor")) {
+        // Krisp errors are non-fatal, just log them
+        console.warn("[Vapi] Krisp processor warning (non-fatal):", error.message);
+        return; // Don't show toast for Krisp warnings
       }
+      
       toast({
         title: "Error",
         description: errorMsg,
@@ -99,7 +166,8 @@ export const VoiceInterface = () => {
         vapiRef.current.stop();
       }
     };
-  }, [toast, isSpeaking, isConnected]);
+  // Only run once (toast is stable enough, but suppress lint if needed)
+  }, [toast, negotiationCase.publicKey]);
 
   const startCall = async () => {
     try {
@@ -122,8 +190,68 @@ export const VoiceInterface = () => {
       }
       
       setStatus("Connecting...");
-      console.log("Starting call with assistant:", ASSISTANT_ID);
-      await vapiRef.current.start(ASSISTANT_ID);
+      console.log("[startCall] Initiating call");
+      console.log("[startCall] Case:", negotiationCase.title);
+      console.log("[startCall] Case ID:", negotiationCase.id);
+      const effectivePublicKey = negotiationCase.publicKey || GLOBAL_VAPI_PUBLIC_KEY;
+      console.log("[startCall] Public key:", effectivePublicKey);
+      console.log("[startCall] Assistant ID:", negotiationCase.assistantId || "(none - will use transient)");
+      console.log("[startCall] Vapi instance exists:", !!vapiRef.current);
+      
+      try {
+        // Decide between existing assistant (by ID) or transient inline assistant
+        if (negotiationCase.assistantId) {
+          console.log("[startCall] Using hosted assistant with ID:", negotiationCase.assistantId);
+          console.log("[startCall] Calling vapi.start() with assistant ID...");
+          await vapiRef.current.start(negotiationCase.assistantId);
+          console.log("[startCall] vapi.start() completed successfully");
+        } else {
+          console.log("No assistantId on case; creating transient assistant inline");
+          // Transient assistant must be nested under 'assistant'
+          const transientConfig = {
+            assistant: {
+              name: negotiationCase.title,
+              firstMessage: negotiationCase.firstMessage,
+              model: {
+                provider: "openai",
+                model: "gpt-4",
+                messages: [
+                  {
+                    role: "system",
+                    content: negotiationCase.systemPrompt,
+                  },
+                ],
+                temperature: 0.7,
+              },
+              voice: {
+                provider: "11labs", // Adjust if provider requires different identifier (e.g. 'elevenlabs')
+                voiceId: "21m00Tcm4TlvDq8ikWAM",
+              },
+              transcriber: {
+                provider: "deepgram",
+                model: "nova-2",
+                language: "en",
+              },
+              recordingEnabled: false,
+            },
+          } as const;
+          console.log("Transient assistant payload:", transientConfig);
+          await vapiRef.current.start(undefined, transientConfig);
+        }
+        console.log("Call start initiated successfully");
+      } catch (startError: any) {
+        console.error("Start call error:", startError);
+        console.error("Full error object:", JSON.stringify(startError, null, 2));
+        let errorMessage = "Failed to start call";
+        
+        if (startError?.message) {
+          errorMessage = startError.message;
+        } else if (startError?.type === "validation-error") {
+          errorMessage = "Validation error: ensure transient assistant is wrapped in { assistant: { ... } } or provide ASSISTANT_ID.";
+        }
+        
+        throw new Error(errorMessage);
+      }
     } catch (error: any) {
       console.error("Error starting call:", error);
       toast({
@@ -137,7 +265,14 @@ export const VoiceInterface = () => {
 
   const endCall = () => {
     if (vapiRef.current) {
+      console.log("User manually ending call");
       vapiRef.current.stop();
+      // Reset state immediately
+      connectedRef.current = false;
+      speakingRef.current = false;
+      setIsConnected(false);
+      setIsSpeaking(false);
+      setIsListening(false);
       setStatus("Ready to start");
     }
   };
@@ -147,10 +282,10 @@ export const VoiceInterface = () => {
       {/* Header */}
       <div className="text-center space-y-2">
         <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-          Ski Pass Negotiation
+          {negotiationCase.title}
         </h1>
         <p className="text-muted-foreground text-lg">
-          Practice your negotiation skills with AI
+          {negotiationCase.description}
         </p>
       </div>
 
@@ -194,19 +329,28 @@ export const VoiceInterface = () => {
       <Card className="p-6 w-full max-w-2xl bg-card/50 backdrop-blur">
         <h3 className="text-xl font-semibold mb-4">Scenario Overview</h3>
         <div className="space-y-3 text-sm text-muted-foreground">
-          <p>📍 <strong>Location:</strong> Austrian ski resort valley station</p>
-          <p>🕐 <strong>Time:</strong> 12:50 PM, Thursday in January</p>
-          <p>☀️ <strong>Conditions:</strong> Perfect skiing weather, fresh snow</p>
-          <p>💰 <strong>Half-day pass:</strong> €30 (available from 1:00 PM)</p>
-          <p>🎫 <strong>Full-day pass:</strong> €40 (being offered by another skier)</p>
+          <p>📍 <strong>Location:</strong> {negotiationCase.scenario.location}</p>
+          <p>🕐 <strong>Time:</strong> {negotiationCase.scenario.time}</p>
+          <p>☀️ <strong>Conditions:</strong> {negotiationCase.scenario.conditions}</p>
+          <p>👤 <strong>Your Role:</strong> {negotiationCase.scenario.yourRole}</p>
+          <p>🤖 <strong>AI Role:</strong> {negotiationCase.scenario.aiRole}</p>
         </div>
         <div className="mt-4 p-4 bg-primary/10 rounded-lg">
           <p className="text-sm">
-            <strong>Your goal:</strong> Negotiate the best price for the full-day pass. 
-            The seller can't get a refund, so you have leverage. Be fair but firm!
+            <strong>Your Objective:</strong> {negotiationCase.scenario.objective}
           </p>
         </div>
       </Card>
+      
+      {/* Learn More Button */}
+      <Button
+        variant="outline"
+        onClick={() => navigate("/learn-more")}
+        className="rounded-full px-6"
+      >
+        <BookOpen className="mr-2 h-4 w-4" />
+        Learn More About Negotiation
+      </Button>
     </div>
   );
 };

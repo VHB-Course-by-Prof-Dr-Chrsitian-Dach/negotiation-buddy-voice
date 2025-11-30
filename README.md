@@ -29,6 +29,47 @@ npm i
 npm run dev
 ```
 
+## Voice Negotiation Feature (Vapi Integration)
+
+This project integrates the Vapi AI voice platform for real-time negotiation practice.
+
+### Environment Variables
+
+Create a `.env.local` file (copy from `.env.example`):
+
+```
+VITE_VAPI_PUBLIC_KEY=f1126e26-c62f-4452-8beb-29e341a2e639
+VITE_VAPI_ASSISTANT_ID=eed3866d-fbe9-49eb-a52a-3ff9cf579389
+```
+
+Do NOT expose or place your private key (`2ff0266a-...`) in frontend code. Only the public key is used in the browser.
+
+### Two UI Options
+
+1. Custom interface (`VoiceInterface` + `VoiceOrb` in `src/components/`): richer status, scenario context, listening/speaking animation.
+2. Embed widget (`VapiWidget` component): wraps `<vapi-widget>` from the Vapi SDK for a quick default UI.
+
+You can render the widget on the practice page instead of or alongside the custom interface:
+
+```tsx
+import { VapiWidget } from "@/components/VapiWidget";
+
+// Inside a page/component:
+<VapiWidget />
+```
+
+### Common Troubleshooting
+
+- Microphone denied: allow mic access in browser permissions, then retry.
+- Missing env vars: status will show "Missing Vapi configuration"; ensure `.env.local` is loaded (restart dev server after adding).
+- Incorrect assistant ID: verify the ID matches the one in your Vapi dashboard.
+- Network / HTTPS: production deployments must serve over HTTPS for consistent audio capture.
+
+### Extending
+
+Potential enhancements include transcript logging, negotiation scoring, and persistence of session outcomes. The `vapi.on('message', ...)` hook in `VoiceInterface` is a good entry point for capturing conversation turns.
+
+
 **Edit a file directly in GitHub**
 
 - Navigate to the desired file(s).
