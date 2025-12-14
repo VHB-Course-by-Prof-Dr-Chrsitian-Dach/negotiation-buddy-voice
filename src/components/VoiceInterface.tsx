@@ -144,7 +144,8 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
         vapiRef.current = null;
       }
     };
-  }, [toast]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startCall = async () => {
     if (!vapiRef.current || !negotiationCase.assistantId) return;
