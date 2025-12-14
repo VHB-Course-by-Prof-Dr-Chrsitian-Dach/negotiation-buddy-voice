@@ -154,13 +154,13 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
 
     return () => {
       // Only cleanup on actual component unmount
+      // Note: Practice.tsx uses key={negotiationCase.id}, so switching cases will unmount this instance
       if (vapiRef.current) {
         console.log("[VoiceInterface] Component unmounting, stopping Vapi");
         vapiRef.current.stop();
-        vapiRef.current = null;
       }
     };
-  // Only run once on mount and unmount - negotiationCase changes should not re-initialize Vapi
+  // Only run once on mount - the key prop in Practice.tsx ensures a new instance per case
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
