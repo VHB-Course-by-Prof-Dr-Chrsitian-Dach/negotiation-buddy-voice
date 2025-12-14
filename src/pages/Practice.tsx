@@ -36,7 +36,7 @@ const Practice = () => {
           Back to Cases
         </Button>
         
-        <VoiceInterface key={negotiationCase.id} negotiationCase={negotiationCase} />
+        <VoiceInterface negotiationCase={negotiationCase} />
       </div>
     </div>
   );
