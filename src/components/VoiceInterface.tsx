@@ -8,8 +8,8 @@ import { VoiceOrb } from "./VoiceOrb";
 import { useNavigate } from "react-router-dom";
 import type { NegotiationCase } from "@/data/negotiationCases";
 
-// Base public key fallback if a case does not specify one
-const GLOBAL_VAPI_PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY as string | undefined;
+// Global Vapi public key from environment variable
+const VAPI_PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY as string | undefined;
 
 interface VoiceInterfaceProps {
   negotiationCase: NegotiationCase;
@@ -27,147 +27,142 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
   const { toast } = useToast();
 
   useEffect(() => {
-    const effectivePublicKey = negotiationCase.publicKey || GLOBAL_VAPI_PUBLIC_KEY;
     console.log("[VoiceInterface] Initializing Vapi for case:", negotiationCase.id);
-    console.log("[VoiceInterface] Public key:", effectivePublicKey);
-    console.log("[VoiceInterface] Assistant ID:", negotiationCase.assistantId || "none (will use transient)");
+    console.log("[VoiceInterface] Public key:", VAPI_PUBLIC_KEY);
+    console.log("[VoiceInterface] Assistant ID:", negotiationCase.assistantId);
     
-    if (!effectivePublicKey) {
+    if (!VAPI_PUBLIC_KEY) {
       setStatus("Missing Vapi configuration");
       toast({
         title: "Configuration Missing",
-        description: "Set VITE_VAPI_PUBLIC_KEY in .env.local or provide publicKey per case",
+        description: "Set VITE_VAPI_PUBLIC_KEY in .env.local",
         variant: "destructive",
       });
       return;
     }
 
-    // Clean up previous instance if it exists
-    if (vapiRef.current) {
-      console.log("[VoiceInterface] Cleaning up previous Vapi instance");
-      try {
-        vapiRef.current.stop();
-      } catch (e) {
-        console.warn("[VoiceInterface] Error stopping previous instance:", e);
-      }
+    // Initialize Vapi once - only create new instance if it doesn't exist
+    if (!vapiRef.current) {
+      console.log("[VoiceInterface] Creating new Vapi instance");
+      const vapi = new Vapi(VAPI_PUBLIC_KEY, {
+        // Disable Krisp noise cancellation to prevent processor errors
+        enableKrisp: false,
+      });
+      vapiRef.current = vapi;
+
+      // Set up event listeners
+      vapi.on("call-start", () => {
+        console.log("Call started");
+        connectedRef.current = true;
+        setIsConnected(true);
+        setStatus("Connected");
+        toast({
+          title: "Connected",
+          description: "Voice session started successfully",
+        });
+      });
+
+      vapi.on("call-end", (endEvent: any) => {
+        console.log("Call ended", endEvent);
+        console.log("Call end reason:", endEvent?.reason || "unknown");
+        connectedRef.current = false;
+        speakingRef.current = false;
+        setIsConnected(false);
+        setIsSpeaking(false);
+        setIsListening(false);
+        setStatus("Call ended");
+        
+        // Only show toast if call wasn't manually ended by user
+        if (endEvent?.reason !== "user-ended") {
+          toast({
+            title: "Session Ended",
+            description: endEvent?.reason ? `Reason: ${endEvent.reason}` : "Voice session has ended",
+          });
+        }
+      });
+
+      vapi.on("speech-start", () => {
+        console.log("AI started speaking");
+        speakingRef.current = true;
+        setIsSpeaking(true);
+        setIsListening(false);
+        setStatus("AI is speaking...");
+      });
+
+      vapi.on("speech-end", () => {
+        console.log("AI stopped speaking");
+        speakingRef.current = false;
+        setIsSpeaking(false);
+        setStatus("Listening...");
+      });
+
+      vapi.on("volume-level", (level: number) => {
+        // Only update listening state when AI isn't speaking
+        if (!speakingRef.current) {
+          if (level > 0.01) {
+            setIsListening(true);
+            setStatus("You are speaking...");
+          } else {
+            setIsListening(false);
+            if (connectedRef.current) setStatus("Listening...");
+          }
+        }
+      });
+
+      vapi.on("error", (error: any) => {
+        console.error("[Vapi Error] Full error object:", error);
+        console.error("[Vapi Error] Type:", error?.type);
+        console.error("[Vapi Error] Message:", error?.message);
+        console.error("[Vapi Error] Details:", error?.details);
+        console.error("[Vapi Error] Stage:", error?.stage);
+        console.error("[Vapi Error] Stringified:", JSON.stringify(error, null, 2));
+        
+        let errorMsg = "An error occurred";
+        if (error.message) {
+          errorMsg = error.message;
+        }
+        
+        // Check for common errors
+        if (error.type === "start-method-error") {
+          errorMsg = "Failed to start call. The assistant ID may be invalid or inaccessible.";
+          setStatus("Failed to connect");
+        } else if (error.type === "validation-error") {
+          errorMsg = "Configuration validation failed. Check assistant settings.";
+          setStatus("Failed to connect");
+        } else if (error.message?.includes("assistant") || error.message?.includes("404")) {
+          errorMsg = "Assistant not found. Please verify your assistant ID in the Vapi dashboard.";
+          setStatus("Failed to connect");
+        } else if (error.message?.includes("microphone") || error.message?.includes("audio")) {
+          errorMsg = "Microphone error. Please check your audio settings.";
+        } else if (error.message?.includes("Krisp") || error.message?.includes("processor")) {
+          // Krisp errors are non-fatal, just log them
+          console.warn("[Vapi] Krisp processor warning (non-fatal):", error.message);
+          return; // Don't show toast for Krisp warnings
+        }
+        
+        toast({
+          title: "Error",
+          description: errorMsg,
+          variant: "destructive",
+        });
+      });
+
+      vapi.on("message", (message: any) => {
+        console.log("Vapi message:", message);
+      });
     }
 
-    // Initialize Vapi with configuration to disable Krisp
-    console.log("[VoiceInterface] Creating new Vapi instance");
-    const vapi = new Vapi(effectivePublicKey, {
-      // Disable Krisp noise cancellation to prevent processor errors
-      enableKrisp: false,
-    });
-    vapiRef.current = vapi;
-
-    // Set up event listeners
-    vapi.on("call-start", () => {
-      console.log("Call started");
-      connectedRef.current = true;
-      setIsConnected(true);
-      setStatus("Connected");
-      toast({
-        title: "Connected",
-        description: "Voice session started successfully",
-      });
-    });
-
-    vapi.on("call-end", (endEvent: any) => {
-      console.log("Call ended", endEvent);
-      console.log("Call end reason:", endEvent?.reason || "unknown");
-      connectedRef.current = false;
-      speakingRef.current = false;
-      setIsConnected(false);
-      setIsSpeaking(false);
-      setIsListening(false);
-      setStatus("Call ended");
-      
-      // Only show toast if call wasn't manually ended by user
-      if (endEvent?.reason !== "user-ended") {
-        toast({
-          title: "Session Ended",
-          description: endEvent?.reason ? `Reason: ${endEvent.reason}` : "Voice session has ended",
-        });
-      }
-    });
-
-    vapi.on("speech-start", () => {
-      console.log("AI started speaking");
-      speakingRef.current = true;
-      setIsSpeaking(true);
-      setIsListening(false);
-      setStatus("AI is speaking...");
-    });
-
-    vapi.on("speech-end", () => {
-      console.log("AI stopped speaking");
-      speakingRef.current = false;
-      setIsSpeaking(false);
-      setStatus("Listening...");
-    });
-
-    vapi.on("volume-level", (level: number) => {
-      // Only update listening state when AI isn't speaking
-      if (!speakingRef.current) {
-        if (level > 0.01) {
-          setIsListening(true);
-          setStatus("You are speaking...");
-        } else {
-          setIsListening(false);
-          if (connectedRef.current) setStatus("Listening...");
-        }
-      }
-    });
-
-    vapi.on("error", (error: any) => {
-      console.error("[Vapi Error] Full error object:", error);
-      console.error("[Vapi Error] Type:", error?.type);
-      console.error("[Vapi Error] Message:", error?.message);
-      console.error("[Vapi Error] Details:", error?.details);
-      console.error("[Vapi Error] Stage:", error?.stage);
-      console.error("[Vapi Error] Stringified:", JSON.stringify(error, null, 2));
-      
-      let errorMsg = "An error occurred";
-      if (error.message) {
-        errorMsg = error.message;
-      }
-      
-      // Check for common errors
-      if (error.type === "start-method-error") {
-        errorMsg = "Failed to start call. The assistant ID may be invalid or inaccessible.";
-        setStatus("Failed to connect");
-      } else if (error.type === "validation-error") {
-        errorMsg = "Configuration validation failed. Check assistant settings.";
-        setStatus("Failed to connect");
-      } else if (error.message?.includes("assistant") || error.message?.includes("404")) {
-        errorMsg = "Assistant not found. Please verify your assistant ID in the Vapi dashboard.";
-        setStatus("Failed to connect");
-      } else if (error.message?.includes("microphone") || error.message?.includes("audio")) {
-        errorMsg = "Microphone error. Please check your audio settings.";
-      } else if (error.message?.includes("Krisp") || error.message?.includes("processor")) {
-        // Krisp errors are non-fatal, just log them
-        console.warn("[Vapi] Krisp processor warning (non-fatal):", error.message);
-        return; // Don't show toast for Krisp warnings
-      }
-      
-      toast({
-        title: "Error",
-        description: errorMsg,
-        variant: "destructive",
-      });
-    });
-
-    vapi.on("message", (message: any) => {
-      console.log("Vapi message:", message);
-    });
-
     return () => {
+      // Only cleanup on actual component unmount
       if (vapiRef.current) {
+        console.log("[VoiceInterface] Component unmounting, stopping Vapi");
         vapiRef.current.stop();
+        vapiRef.current = null;
       }
     };
-  // Only run once (toast is stable enough, but suppress lint if needed)
-  }, [toast, negotiationCase.publicKey]);
+  // Only run once on mount and unmount - negotiationCase changes should not re-initialize Vapi
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startCall = async () => {
     try {
@@ -193,64 +188,19 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
       console.log("[startCall] Initiating call");
       console.log("[startCall] Case:", negotiationCase.title);
       console.log("[startCall] Case ID:", negotiationCase.id);
-      const effectivePublicKey = negotiationCase.publicKey || GLOBAL_VAPI_PUBLIC_KEY;
-      console.log("[startCall] Public key:", effectivePublicKey);
-      console.log("[startCall] Assistant ID:", negotiationCase.assistantId || "(none - will use transient)");
+      console.log("[startCall] Assistant ID:", negotiationCase.assistantId);
       console.log("[startCall] Vapi instance exists:", !!vapiRef.current);
       
       try {
-        // Decide between existing assistant (by ID) or transient inline assistant
-        if (negotiationCase.assistantId) {
-          console.log("[startCall] Using hosted assistant with ID:", negotiationCase.assistantId);
-          console.log("[startCall] Calling vapi.start() with assistant ID...");
-          await vapiRef.current.start(negotiationCase.assistantId);
-          console.log("[startCall] vapi.start() completed successfully");
-        } else {
-          console.log("No assistantId on case; creating transient assistant inline");
-          // Transient assistant must be nested under 'assistant'
-          const transientConfig = {
-            assistant: {
-              name: negotiationCase.title,
-              firstMessage: negotiationCase.firstMessage,
-              model: {
-                provider: "openai",
-                model: "gpt-4",
-                messages: [
-                  {
-                    role: "system",
-                    content: negotiationCase.systemPrompt,
-                  },
-                ],
-                temperature: 0.7,
-              },
-              voice: {
-                provider: "11labs", // Adjust if provider requires different identifier (e.g. 'elevenlabs')
-                voiceId: "21m00Tcm4TlvDq8ikWAM",
-              },
-              transcriber: {
-                provider: "deepgram",
-                model: "nova-2",
-                language: "en",
-              },
-              recordingEnabled: false,
-            },
-          } as const;
-          console.log("Transient assistant payload:", transientConfig);
-          await vapiRef.current.start(undefined, transientConfig);
-        }
-        console.log("Call start initiated successfully");
+        // Start call with pre-configured assistant
+        console.log("[startCall] Using hosted assistant with ID:", negotiationCase.assistantId);
+        console.log("[startCall] Calling vapi.start() with assistant ID...");
+        await vapiRef.current.start(negotiationCase.assistantId);
+        console.log("[startCall] vapi.start() completed successfully");
       } catch (startError: any) {
         console.error("Start call error:", startError);
         console.error("Full error object:", JSON.stringify(startError, null, 2));
-        let errorMessage = "Failed to start call";
-        
-        if (startError?.message) {
-          errorMessage = startError.message;
-        } else if (startError?.type === "validation-error") {
-          errorMessage = "Validation error: ensure transient assistant is wrapped in { assistant: { ... } } or provide ASSISTANT_ID.";
-        }
-        
-        throw new Error(errorMessage);
+        throw startError;
       }
     } catch (error: any) {
       console.error("Error starting call:", error);
