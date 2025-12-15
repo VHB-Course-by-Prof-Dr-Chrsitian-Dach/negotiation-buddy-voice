@@ -31,7 +31,10 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
       return;
     }
 
-    const vapi = new Vapi(VAPI_PUBLIC_KEY);
+    // Create Vapi instance with Daily.co config to avoid audio processor issues
+    const vapi = new Vapi(VAPI_PUBLIC_KEY, undefined, undefined, {
+      audioSource: true, // Use default audio source
+    });
     vapiRef.current = vapi;
 
     vapi.on("call-start", () => {
@@ -77,12 +80,20 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
 
     vapi.on("error", (error: unknown) => {
       console.error("[Vapi] Error:", error);
-      setIsConnecting(false);
       
       const err = error as { message?: string };
+      const errorMsg = err?.message || "";
+      
+      // Ignore Krisp-related errors as they don't affect call functionality
+      if (errorMsg.includes("Krisp") || errorMsg.includes("processor")) {
+        console.log("[Vapi] Ignoring Krisp processor error");
+        return;
+      }
+      
+      setIsConnecting(false);
       toast({
         title: "Connection Error",
-        description: err?.message || "Failed to connect. Please try again.",
+        description: errorMsg || "Failed to connect. Please try again.",
         variant: "destructive",
       });
       setStatus("Error - try again");
@@ -112,7 +123,13 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
       setStatus("Connecting...");
       
       console.log("[Vapi] Starting call with assistant:", negotiationCase.assistantId);
-      await vapiRef.current.start(negotiationCase.assistantId);
+      
+      // Disable background denoising (Krisp) to prevent audio processor errors
+      await vapiRef.current.start(negotiationCase.assistantId, {
+        backgroundSpeechDenoisingPlan: {
+          smartDenoisingPlan: { enabled: false }
+        }
+      });
     } catch (error) {
       console.error("[Vapi] Start call error:", error);
       setIsConnecting(false);
