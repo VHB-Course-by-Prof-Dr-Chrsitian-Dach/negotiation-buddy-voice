@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import Vapi from "@vapi-ai/web";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Phone, PhoneOff, BookOpen } from "lucide-react";
@@ -9,6 +8,26 @@ import { useNavigate } from "react-router-dom";
 import type { NegotiationCase } from "@/data/negotiationCases";
 
 const VAPI_PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY as string | undefined;
+
+// Extend Window interface for vapiSDK
+declare global {
+  interface Window {
+    vapiSDK?: {
+      run: (config: {
+        apiKey: string;
+        assistant: string;
+        config?: Record<string, unknown>;
+      }) => VapiInstance;
+    };
+    vapiInstance?: VapiInstance;
+  }
+}
+
+interface VapiInstance {
+  on: (event: string, callback: (...args: unknown[]) => void) => void;
+  start: () => void;
+  stop: () => void;
+}
 
 interface VoiceInterfaceProps {
   negotiationCase: NegotiationCase;
@@ -21,95 +40,167 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
   const [isListening, setIsListening] = useState(false);
   const [status, setStatus] = useState<string>("Ready to start");
   const [isConnecting, setIsConnecting] = useState(false);
-  const vapiRef = useRef<Vapi | null>(null);
+  const [sdkLoaded, setSdkLoaded] = useState(false);
+  const vapiInstanceRef = useRef<VapiInstance | null>(null);
   const { toast } = useToast();
 
-  // Initialize Vapi instance
+  // Load Vapi SDK via script tag (official recommended approach)
   useEffect(() => {
     if (!VAPI_PUBLIC_KEY) {
       setStatus("Missing API configuration");
       return;
     }
 
-    // Create Vapi instance with Daily.co config to avoid audio processor issues
-    const vapi = new Vapi(VAPI_PUBLIC_KEY, undefined, undefined, {
-      audioSource: true, // Use default audio source
-    });
-    vapiRef.current = vapi;
-
-    vapi.on("call-start", () => {
-      console.log("[Vapi] Call started");
-      setIsConnected(true);
-      setIsConnecting(false);
-      setStatus("Connected - Start speaking!");
-      toast({ title: "Connected", description: "Voice session started" });
-    });
-
-    vapi.on("call-end", () => {
-      console.log("[Vapi] Call ended");
-      setIsConnected(false);
-      setIsConnecting(false);
-      setIsSpeaking(false);
-      setIsListening(false);
-      setStatus("Session ended");
-    });
-
-    vapi.on("speech-start", () => {
-      setIsSpeaking(true);
-      setIsListening(false);
-      setStatus("AI is speaking...");
-    });
-
-    vapi.on("speech-end", () => {
-      setIsSpeaking(false);
-      setStatus("Listening...");
-    });
-
-    vapi.on("volume-level", (level: number) => {
-      if (!isSpeaking && isConnected) {
-        setIsListening(level > 0.01);
-        if (level > 0.01) {
-          setStatus("You are speaking...");
-        }
+    const scriptId = "vapi-sdk-script";
+    
+    // Check if script already loaded
+    if (document.getElementById(scriptId)) {
+      if (window.vapiSDK) {
+        setSdkLoaded(true);
       }
-    });
+      return;
+    }
 
-    vapi.on("message", (message: unknown) => {
-      console.log("[Vapi] Message:", message);
-    });
+    const script = document.createElement("script");
+    script.id = scriptId;
+    script.src = "https://cdn.jsdelivr.net/gh/VapiAI/html-script-tag@latest/dist/assets/index.js";
+    script.defer = true;
+    script.async = true;
 
-    vapi.on("error", (error: unknown) => {
-      console.error("[Vapi] Error:", error);
-      
-      const err = error as { message?: string };
-      const errorMsg = err?.message || "";
-      
-      // Ignore Krisp-related errors as they don't affect call functionality
-      if (errorMsg.includes("Krisp") || errorMsg.includes("processor")) {
-        console.log("[Vapi] Ignoring Krisp processor error");
-        return;
-      }
-      
-      setIsConnecting(false);
+    script.onload = () => {
+      console.log("[Vapi] SDK loaded via CDN");
+      setSdkLoaded(true);
+    };
+
+    script.onerror = () => {
+      console.error("[Vapi] Failed to load SDK");
+      setStatus("Failed to load voice SDK");
       toast({
-        title: "Connection Error",
-        description: errorMsg || "Failed to connect. Please try again.",
+        title: "SDK Error",
+        description: "Failed to load voice SDK. Please refresh the page.",
         variant: "destructive",
       });
-      setStatus("Error - try again");
-    });
+    };
+
+    document.head.appendChild(script);
 
     return () => {
-      vapi.stop();
-      vapiRef.current = null;
+      // Cleanup: stop any active call
+      if (vapiInstanceRef.current) {
+        try {
+          vapiInstanceRef.current.stop();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
     };
-  }, [toast, isSpeaking, isConnected]);
+  }, [toast]);
+
+  // Initialize Vapi instance when SDK is loaded and assistant changes
+  useEffect(() => {
+    if (!sdkLoaded || !window.vapiSDK || !VAPI_PUBLIC_KEY || !negotiationCase.assistantId) {
+      return;
+    }
+
+    console.log("[Vapi] Initializing with assistant:", negotiationCase.assistantId);
+
+    try {
+      const instance = window.vapiSDK.run({
+        apiKey: VAPI_PUBLIC_KEY,
+        assistant: negotiationCase.assistantId,
+        config: {
+          hide: true, // Hide the default button, we use our own UI
+          position: "bottom-right",
+        },
+      });
+
+      vapiInstanceRef.current = instance;
+
+      instance.on("call-start", () => {
+        console.log("[Vapi] Call started");
+        setIsConnected(true);
+        setIsConnecting(false);
+        setStatus("Connected - Start speaking!");
+        toast({ title: "Connected", description: "Voice session started" });
+      });
+
+      instance.on("call-end", () => {
+        console.log("[Vapi] Call ended");
+        setIsConnected(false);
+        setIsConnecting(false);
+        setIsSpeaking(false);
+        setIsListening(false);
+        setStatus("Session ended");
+      });
+
+      instance.on("speech-start", () => {
+        setIsSpeaking(true);
+        setIsListening(false);
+        setStatus("AI is speaking...");
+      });
+
+      instance.on("speech-end", () => {
+        setIsSpeaking(false);
+        setStatus("Listening...");
+      });
+
+      instance.on("volume-level", (level: unknown) => {
+        const vol = level as number;
+        if (!isSpeaking && isConnected) {
+          setIsListening(vol > 0.01);
+          if (vol > 0.01) {
+            setStatus("You are speaking...");
+          }
+        }
+      });
+
+      instance.on("message", (message: unknown) => {
+        console.log("[Vapi] Message:", message);
+      });
+
+      instance.on("error", (error: unknown) => {
+        console.error("[Vapi] Error:", error);
+        const err = error as { message?: string };
+        const errorMsg = err?.message || "";
+
+        // Ignore Krisp-related errors
+        if (errorMsg.includes("Krisp") || errorMsg.includes("processor")) {
+          console.log("[Vapi] Ignoring Krisp processor error");
+          return;
+        }
+
+        setIsConnecting(false);
+        toast({
+          title: "Connection Error",
+          description: errorMsg || "Failed to connect. Please try again.",
+          variant: "destructive",
+        });
+        setStatus("Error - try again");
+      });
+
+      setStatus("Ready to start");
+    } catch (error) {
+      console.error("[Vapi] Failed to initialize:", error);
+      setStatus("Failed to initialize");
+    }
+
+    return () => {
+      if (vapiInstanceRef.current) {
+        try {
+          vapiInstanceRef.current.stop();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        vapiInstanceRef.current = null;
+      }
+    };
+  }, [sdkLoaded, negotiationCase.assistantId, toast, isSpeaking, isConnected]);
 
   const startCall = useCallback(async () => {
-    if (!vapiRef.current || !negotiationCase.assistantId) {
+    if (!vapiInstanceRef.current) {
       toast({
-        title: "Configuration Error",
-        description: "Missing assistant configuration",
+        title: "Not Ready",
+        description: "Voice SDK is still loading. Please wait.",
         variant: "destructive",
       });
       return;
@@ -118,23 +209,17 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
     try {
       // Request microphone permission first
       await navigator.mediaDevices.getUserMedia({ audio: true });
-      
+
       setIsConnecting(true);
       setStatus("Connecting...");
-      
-      console.log("[Vapi] Starting call with assistant:", negotiationCase.assistantId);
-      
-      // Disable background denoising (Krisp) to prevent audio processor errors
-      await vapiRef.current.start(negotiationCase.assistantId, {
-        backgroundSpeechDenoisingPlan: {
-          smartDenoisingPlan: { enabled: false }
-        }
-      });
+
+      console.log("[Vapi] Starting call...");
+      vapiInstanceRef.current.start();
     } catch (error) {
       console.error("[Vapi] Start call error:", error);
       setIsConnecting(false);
       setStatus("Failed to connect");
-      
+
       const err = error as { name?: string; message?: string };
       if (err.name === "NotAllowedError") {
         toast({
@@ -150,11 +235,11 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
         });
       }
     }
-  }, [negotiationCase.assistantId, toast]);
+  }, [toast]);
 
   const endCall = useCallback(() => {
-    if (vapiRef.current) {
-      vapiRef.current.stop();
+    if (vapiInstanceRef.current) {
+      vapiInstanceRef.current.stop();
       setIsConnected(false);
       setIsConnecting(false);
       setIsSpeaking(false);
@@ -189,7 +274,7 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
       </div>
 
       {/* Voice Orb */}
-      <VoiceOrb 
+      <VoiceOrb
         isConnected={isConnected}
         isSpeaking={isSpeaking}
         isListening={isListening}
@@ -206,11 +291,11 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
           <Button
             size="lg"
             onClick={startCall}
-            disabled={isConnecting}
+            disabled={isConnecting || !sdkLoaded}
             className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-full px-8 py-6 text-lg shadow-lg hover:shadow-xl transition-all"
           >
             <Phone className="mr-2 h-5 w-5" />
-            {isConnecting ? "Connecting..." : "Start Practice"}
+            {!sdkLoaded ? "Loading..." : isConnecting ? "Connecting..." : "Start Practice"}
           </Button>
         ) : (
           <Button
@@ -241,7 +326,7 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
           </p>
         </div>
       </Card>
-      
+
       {/* Learn More Button */}
       <Button
         variant="outline"
