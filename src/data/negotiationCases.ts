@@ -4,6 +4,8 @@ export interface NegotiationCase {
   description: string;
   difficulty: "Beginner" | "Intermediate" | "Advanced";
   duration: string;
+  systemPrompt?: string;
+  firstMessage?: string;
   assistantId: string; // Vapi hosted assistant ID
   scenario: {
     location: string;

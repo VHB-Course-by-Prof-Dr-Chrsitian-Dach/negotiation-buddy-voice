@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Vapi from "@vapi-ai/web";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -9,7 +9,7 @@ import { useNavigate } from "react-router-dom";
 import type { NegotiationCase } from "@/data/negotiationCases";
 
 // Global Vapi public key from environment variable
-const VAPI_PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY as string | undefined;
+const VAPI_PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY ?? "f1126e26-c62f-4452-8beb-29e341a2e639";
 
 interface VoiceInterfaceProps {
   negotiationCase: NegotiationCase;
@@ -17,164 +17,119 @@ interface VoiceInterfaceProps {
 
 export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
   const navigate = useNavigate();
+  const [vapi, setVapi] = useState<Vapi | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [status, setStatus] = useState<string>("Ready to start");
-  const vapiRef = useRef<Vapi | null>(null);
-  const speakingRef = useRef(false);
-  const connectedRef = useRef(false);
-  const isMountedRef = useRef(true);
+  const [transcript, setTranscript] = useState<Array<{role: string, text: string}>>([]);
   const { toast } = useToast();
 
   useEffect(() => {
-    isMountedRef.current = true;
-    
-    if (!VAPI_PUBLIC_KEY || typeof VAPI_PUBLIC_KEY !== 'string') {
-      setStatus("Missing Vapi configuration");
+    const vapiInstance = new Vapi(VAPI_PUBLIC_KEY);
+    setVapi(vapiInstance);
+
+    // Set up event listeners
+    vapiInstance.on("call-start", () => {
+      setIsConnected(true);
+      setStatus("Connected");
       toast({
-        title: "Configuration Missing",
-        description: "Set VITE_VAPI_PUBLIC_KEY in .env.local",
+        title: "Connected",
+        description: "Voice session started successfully",
+      });
+    });
+
+    vapiInstance.on("call-end", () => {
+      setIsConnected(false);
+      setIsSpeaking(false);
+      setIsListening(false);
+      setStatus("Call ended");
+    });
+
+    vapiInstance.on("speech-start", () => {
+      setIsSpeaking(true);
+      setIsListening(false);
+      setStatus("AI is speaking...");
+    });
+
+    vapiInstance.on("speech-end", () => {
+      setIsSpeaking(false);
+      setStatus("Listening...");
+    });
+
+    vapiInstance.on("volume-level", (level: number) => {
+      // Only show listening state when AI is not speaking
+      if (!isSpeaking && isConnected) {
+        if (level > 0.05) { 
+          setIsListening(true);
+          setStatus("You are speaking...");
+        } else {
+          setIsListening(false);
+        }
+      }
+    });
+
+    vapiInstance.on("message", (message: any) => {
+      if (message.type === 'transcript') {
+        setTranscript(prev => [...prev, {
+          role: message.role,
+          text: message.transcript
+        }]);
+      }
+    });
+
+    vapiInstance.on("error", (error: any) => {
+      console.error("Vapi Error:", error);
+      
+      // Filter out non-critical errors or known noise
+      if (error.message?.includes("Krisp")) return;
+
+      toast({
+        title: "Connection Error",
+        description: error.message || "An unexpected error occurred",
+        variant: "destructive",
+      });
+
+      // Reset state on critical errors
+      setIsConnected(false);
+      setStatus("Error occurred");
+    });
+
+    return () => {
+      vapiInstance.stop();
+    };
+  }, []); 
+
+  const startCall = async () => {
+    if (!vapi) return;
+
+    if (!negotiationCase.assistantId) {
+      toast({
+        title: "Configuration Error",
+        description: "No assistant ID configured for this case.",
         variant: "destructive",
       });
       return;
     }
 
-    // Initialize Vapi once - only create new instance if it doesn't exist
-    if (!vapiRef.current) {
-      const vapi = new Vapi(VAPI_PUBLIC_KEY, {
-        enableKrisp: false,
-      });
-      vapiRef.current = vapi;
-
-      // Set up event listeners
-      vapi.on("call-start", () => {
-        if (!isMountedRef.current) return;
-        connectedRef.current = true;
-        setIsConnected(true);
-        setStatus("Connected");
-        toast({
-          title: "Connected",
-          description: "Voice session started successfully",
-        });
-      });
-
-      vapi.on("call-end", (endEvent: unknown) => {
-        if (!isMountedRef.current) return;
-        connectedRef.current = false;
-        speakingRef.current = false;
-        setIsConnected(false);
-        setIsSpeaking(false);
-        setIsListening(false);
-        setStatus("Call ended");
-        
-        const event = endEvent as { reason?: string };
-        if (event?.reason !== "user-ended") {
-          toast({
-            title: "Session Ended",
-            description: event?.reason ? `Reason: ${event.reason}` : "Voice session has ended",
-          });
-        }
-      });
-
-      vapi.on("speech-start", () => {
-        if (!isMountedRef.current) return;
-        speakingRef.current = true;
-        setIsSpeaking(true);
-        setIsListening(false);
-        setStatus("AI is speaking...");
-      });
-
-      vapi.on("speech-end", () => {
-        if (!isMountedRef.current) return;
-        speakingRef.current = false;
-        setIsSpeaking(false);
-        setStatus("Listening...");
-      });
-
-      vapi.on("volume-level", (level: number) => {
-        if (!isMountedRef.current) return;
-        if (!speakingRef.current) {
-          if (level > 0.01) {
-            setIsListening(true);
-            setStatus("You are speaking...");
-          } else {
-            setIsListening(false);
-            if (connectedRef.current) setStatus("Listening...");
-          }
-        }
-      });
-
-      vapi.on("error", (error: unknown) => {
-        if (!isMountedRef.current) return;
-        
-        const err = error as { type?: string; message?: string };
-        let errorMsg = "An error occurred";
-        if (err.message) {
-          errorMsg = err.message;
-        }
-        
-        if (err.type === "start-method-error") {
-          errorMsg = "Failed to start call. The assistant ID may be invalid or inaccessible.";
-          setStatus("Failed to connect");
-        } else if (err.type === "validation-error") {
-          errorMsg = "Configuration validation failed. Check assistant settings.";
-          setStatus("Failed to connect");
-        } else if (err.message?.includes("assistant") || err.message?.includes("404")) {
-          errorMsg = "Assistant not found. Please verify your assistant ID in the Vapi dashboard.";
-          setStatus("Failed to connect");
-        } else if (err.message?.includes("microphone") || err.message?.includes("audio")) {
-          errorMsg = "Microphone error. Please check your audio settings.";
-        } else if (err.message?.includes("Krisp") || err.message?.includes("processor")) {
-          return;
-        }
-        
-        toast({
-          title: "Error",
-          description: errorMsg,
-          variant: "destructive",
-        });
-      });
-    }
-
-    return () => {
-      isMountedRef.current = false;
-      if (vapiRef.current) {
-        vapiRef.current.stop();
-        vapiRef.current = null;
-      }
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const startCall = async () => {
-    if (!vapiRef.current || !negotiationCase.assistantId) return;
-    
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
-      
       setStatus("Connecting...");
-      await vapiRef.current.start(negotiationCase.assistantId);
+      await vapi.start(negotiationCase.assistantId);
     } catch (error) {
+      console.error("Failed to start call:", error);
       setStatus("Failed to connect");
       toast({
         title: "Connection Failed",
-        description: "Please check your microphone and try again",
+        description: "Could not start the voice session. Please check usage limits or microphone permissions.",
         variant: "destructive",
       });
+      setIsConnected(false);
     }
   };
 
   const endCall = () => {
-    if (vapiRef.current) {
-      vapiRef.current.stop();
-      connectedRef.current = false;
-      speakingRef.current = false;
-      setIsConnected(false);
-      setIsSpeaking(false);
-      setIsListening(false);
-      setStatus("Ready to start");
+    if (vapi) {
+      vapi.stop();
     }
   };
 
@@ -191,7 +146,7 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
       </div>
 
       {/* Voice Orb */}
-      <VoiceOrb 
+      <VoiceOrb
         isConnected={isConnected}
         isSpeaking={isSpeaking}
         isListening={isListening}
@@ -242,7 +197,7 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
           </p>
         </div>
       </Card>
-      
+
       {/* Learn More Button */}
       <Button
         variant="outline"
