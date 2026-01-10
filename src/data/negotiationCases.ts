@@ -24,7 +24,7 @@ export const negotiationCases: NegotiationCase[] = [
     description: "Negotiate the purchase of a full-day ski pass from another skier at an Austrian resort",
     difficulty: "Beginner",
     duration: "5-10 min",
-    assistantId: "0f4de0f8-b0d6-4fbf-82ab-0a15fe7f3f9f",
+    assistantId: import.meta.env.VITE_VAPI_ASSISTANT_ID_SKIPASS ?? "0f4de0f8-b0d6-4fbf-82ab-0a15fe7f3f9f",
     scenario: {
       location: "Austrian ski resort valley station",
       time: "12:50 PM, Thursday in January",
@@ -40,7 +40,7 @@ export const negotiationCases: NegotiationCase[] = [
     description: "Navigate past a protective executive assistant to reach a key decision-maker",
     difficulty: "Intermediate",
     duration: "7-12 min",
-    assistantId: "eed3866d-fbe9-49eb-a52a-3ff9cf579389",
+    assistantId: import.meta.env.VITE_VAPI_ASSISTANT_ID_GATEKEEPER ?? "eed3866d-fbe9-49eb-a52a-3ff9cf579389",
     scenario: {
       location: "Phone call to executive office",
       time: "Tuesday, 10:30 AM",
