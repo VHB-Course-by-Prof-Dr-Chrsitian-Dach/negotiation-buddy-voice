@@ -39,7 +39,8 @@ Create a `.env.local` file (copy from `.env.example`):
 
 ```
 VITE_VAPI_PUBLIC_KEY=f1126e26-c62f-4452-8beb-29e341a2e639
-VITE_VAPI_ASSISTANT_ID=eed3866d-fbe9-49eb-a52a-3ff9cf579389
+VITE_VAPI_ASSISTANT_ID_GATEKEEPER=eed3866d-fbe9-49eb-a52a-3ff9cf579389
+VITE_VAPI_ASSISTANT_ID_SKIPASS=0f4de0f8-b0d6-4fbf-82ab-0a15fe7f3f9f
 ```
 
 Do NOT expose or place your private key (`2ff0266a-...`) in frontend code. Only the public key is used in the browser.
