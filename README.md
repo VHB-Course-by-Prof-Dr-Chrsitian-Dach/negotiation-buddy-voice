@@ -41,23 +41,25 @@ Create a `.env.local` file (copy from `.env.example`):
 VITE_VAPI_PUBLIC_KEY=f1126e26-c62f-4452-8beb-29e341a2e639
 VITE_VAPI_ASSISTANT_ID_GATEKEEPER=eed3866d-fbe9-49eb-a52a-3ff9cf579389
 VITE_VAPI_ASSISTANT_ID_SKIPASS=0f4de0f8-b0d6-4fbf-82ab-0a15fe7f3f9f
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
 ```
 
 Do NOT expose or place your private key (`2ff0266a-...`) in frontend code. Only the public key is used in the browser.
 
-### Two UI Options
+### Authentication (Student Email Only)
 
-1. Custom interface (`VoiceInterface` + `VoiceOrb` in `src/components/`): richer status, scenario context, listening/speaking animation.
-2. Embed widget (`VapiWidget` component): wraps `<vapi-widget>` from the Vapi SDK for a quick default UI.
+This app requires login to access negotiation cases.
 
-You can render the widget on the practice page instead of or alongside the custom interface:
+- Registration verifies email via a code sent to the inbox.
+- Password reset uses an email code, then lets the user set a new password.
+- Public email providers (e.g. Gmail/Yahoo/Outlook) are blocked — users must use a student/institutional email domain.
 
-```tsx
-import { VapiWidget } from "@/components/VapiWidget";
+For production (Cloudflare Pages), set these environment variables:
 
-// Inside a page/component:
-<VapiWidget />
-```
+- `VITE_VAPI_PUBLIC_KEY`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 
 ### Common Troubleshooting
 

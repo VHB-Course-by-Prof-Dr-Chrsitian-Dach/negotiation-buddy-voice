@@ -1,12 +1,20 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Home, Trophy, BookOpen } from "lucide-react";
+import { useAuth } from "@/auth/AuthContext";
 
 export const Navigation = () => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, isLoading, signOut } = useAuth();
   
   const isActive = (path: string) => {
     return location.pathname === path;
+  };
+
+  const onLogout = async () => {
+    await signOut();
+    navigate("/", { replace: true });
   };
 
   return (
@@ -52,6 +60,20 @@ export const Navigation = () => {
                 Learn More
               </Button>
             </Link>
+
+            {!isLoading && !user && (
+              <Link to="/login">
+                <Button size="sm" className="ml-2">
+                  Login
+                </Button>
+              </Link>
+            )}
+
+            {!isLoading && user && (
+              <Button size="sm" variant="outline" className="ml-2" onClick={onLogout}>
+                Logout
+              </Button>
+            )}
           </div>
         </div>
       </div>

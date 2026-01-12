@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Vapi from "@vapi-ai/web";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { VoiceOrb } from "./VoiceOrb";
 import { useNavigate } from "react-router-dom";
 import type { NegotiationCase } from "@/data/negotiationCases";
+import { getErrorMessage } from "@/lib/errors";
 
 // Global Vapi public key from environment variable
 const VAPI_PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY ?? "f1126e26-c62f-4452-8beb-29e341a2e639";
@@ -23,7 +24,17 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
   const [isListening, setIsListening] = useState(false);
   const [status, setStatus] = useState<string>("Ready to start");
   const [transcript, setTranscript] = useState<Array<{role: string, text: string}>>([]);
+  const isConnectedRef = useRef(false);
+  const isSpeakingRef = useRef(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
 
   useEffect(() => {
     const vapiInstance = new Vapi(VAPI_PUBLIC_KEY);
@@ -59,7 +70,7 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
 
     vapiInstance.on("volume-level", (level: number) => {
       // Only show listening state when AI is not speaking
-      if (!isSpeaking && isConnected) {
+      if (!isSpeakingRef.current && isConnectedRef.current) {
         if (level > 0.05) { 
           setIsListening(true);
           setStatus("You are speaking...");
@@ -69,24 +80,31 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
       }
     });
 
-    vapiInstance.on("message", (message: any) => {
-      if (message.type === 'transcript') {
-        setTranscript(prev => [...prev, {
-          role: message.role,
-          text: message.transcript
-        }]);
-      }
+    vapiInstance.on("message", (message: unknown) => {
+      if (!message || typeof message !== "object") return;
+      const maybe = message as { type?: unknown; role?: unknown; transcript?: unknown };
+      if (maybe.type !== "transcript") return;
+      if (typeof maybe.role !== "string" || typeof maybe.transcript !== "string") return;
+
+      setTranscript((prev) => [
+        ...prev,
+        {
+          role: maybe.role,
+          text: maybe.transcript,
+        },
+      ]);
     });
 
-    vapiInstance.on("error", (error: any) => {
+    vapiInstance.on("error", (error: unknown) => {
       console.error("Vapi Error:", error);
-      
+
+      const message = getErrorMessage(error, "An unexpected error occurred");
       // Filter out non-critical errors or known noise
-      if (error.message?.includes("Krisp")) return;
+      if (message.includes("Krisp")) return;
 
       toast({
         title: "Connection Error",
-        description: error.message || "An unexpected error occurred",
+        description: message,
         variant: "destructive",
       });
 
@@ -98,7 +116,7 @@ export const VoiceInterface = ({ negotiationCase }: VoiceInterfaceProps) => {
     return () => {
       vapiInstance.stop();
     };
-  }, []); 
+  }, [toast]); 
 
   const startCall = async () => {
     if (!vapi) return;
