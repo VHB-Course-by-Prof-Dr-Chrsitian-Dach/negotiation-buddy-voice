@@ -51,13 +51,10 @@ const ForgotPassword = () => {
 
     try {
       setSubmitting(true);
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        email: email.trim().toLowerCase(),
-        options: {
-          shouldCreateUser: false,
-        },
-      });
-      if (otpError) throw otpError;
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+        email.trim().toLowerCase(),
+      );
+      if (resetError) throw resetError;
 
       toast({
         title: "Verification code sent",
@@ -94,7 +91,7 @@ const ForgotPassword = () => {
       const { data, error: verifyError } = await supabase.auth.verifyOtp({
         email: email.trim().toLowerCase(),
         token: code.trim(),
-        type: "email",
+        type: "recovery",
       });
       if (verifyError) throw verifyError;
       if (!data.session) throw new Error("Verification succeeded but no session was created.");
@@ -186,7 +183,7 @@ const ForgotPassword = () => {
                     <Input
                       id="code"
                       inputMode="numeric"
-                      placeholder="6-digit code"
+                      placeholder="Enter code from email"
                       value={code}
                       onChange={(e) => setCode(e.target.value)}
                       required

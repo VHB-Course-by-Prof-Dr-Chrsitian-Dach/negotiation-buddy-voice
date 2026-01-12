@@ -88,7 +88,7 @@ const Register = () => {
       const { data, error } = await supabase.auth.verifyOtp({
         email: email.trim().toLowerCase(),
         token: code.trim(),
-        type: "email",
+        type: "signup",
       });
       if (error) throw error;
 
@@ -217,7 +217,7 @@ const Register = () => {
                     <Input
                       id="code"
                       inputMode="numeric"
-                      placeholder="6-digit code"
+                      placeholder="Enter code from email"
                       value={code}
                       onChange={(e) => setCode(e.target.value)}
                       required
